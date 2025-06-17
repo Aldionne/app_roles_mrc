@@ -20,7 +20,6 @@ def fetch_mrc_roles():
         response.raise_for_status()
         data = response.json()["result"]
 
-        # S'il n'y a pas de clé "records", afficher un message
         if "records" not in data or len(data["records"]) == 0:
             st.warning("⚠️ Aucun enregistrement trouvé dans les résultats de l’API.")
             return pd.DataFrame()
@@ -32,13 +31,13 @@ def fetch_mrc_roles():
 
     df = pd.DataFrame(records)
 
-    # Vérifier que les colonnes "title" et "url" existent
-    if "title" not in df.columns or "url" not in df.columns:
-        st.error("❌ Les données retournées par l'API ne contiennent pas les colonnes attendues ('title' et 'url').")
+    # Mise à jour avec les bons noms de colonnes
+    if "nom du territoire" not in df.columns or "lien" not in df.columns:
+        st.error("❌ Les colonnes attendues ne sont pas disponibles.")
         st.write("Voici les colonnes disponibles :", df.columns.tolist())
         return pd.DataFrame()
 
-    df = df[["title", "url"]].rename(columns={"title": "MRC", "url": "URL"})
+    df = df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "MRC", "lien": "URL"})
     df = df.sort_values("MRC").reset_index(drop=True)
     return df
 
