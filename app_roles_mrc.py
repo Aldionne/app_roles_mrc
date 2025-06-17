@@ -106,7 +106,6 @@ if not mrc_links.empty:
 
                     if selected_codes:
                         df_filtre = df_xml[df_xml["RL0105A"].isin(selected_codes)]
-
                         nb_batiments = len(df_filtre)
                         nb_logements = df_filtre["RL0311A"].sum()
 
@@ -117,3 +116,7 @@ if not mrc_links.empty:
                         st.dataframe(df_filtre)
                     else:
                         st.info("ℹ️ Veuillez sélectionner au moins un code CUBF.")
+        except Exception as e:
+            st.error(f"❌ Erreur lors de l’analyse du fichier : {e}")
+else:
+    st.warning("❌ Impossible de récupérer la liste des MRC. Veuillez réessayer plus tard.")
