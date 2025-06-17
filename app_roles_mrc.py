@@ -1,13 +1,12 @@
-
 import streamlit as st
 import pandas as pd
 import requests
-import zipfile
+import xml.etree.ElementTree as ET
 import io
 
-st.title("🔍 Explorer les rôles d’évaluation foncière du Québec")
+st.title("🔍 Analyse des rôles d’évaluation foncière du Québec selon codes CUBF")
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def fetch_mrc_roles():
     resource_id = "d2db6102-9215-4abc-9b5b-2c37f2e12618"
     base_url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search"
@@ -31,8 +30,8 @@ def fetch_mrc_roles():
         offset += limit
 
     df = pd.DataFrame(records)
+    df.columns = df.columns.str.strip().str.lower()
 
-    # Mise à jour avec les bons noms de colonnes
     if "nom du territoire" not in df.columns or "lien" not in df.columns:
         st.error("❌ Les colonnes attendues ne sont pas disponibles.")
         st.write("Voici les colonnes disponibles :", df.columns.tolist())
@@ -42,7 +41,27 @@ def fetch_mrc_roles():
     df = df.sort_values("MRC").reset_index(drop=True)
     return df
 
-# Appel de la fonction
+def parse_xml_to_df(xml_bytes):
+    """Parse le XML en DataFrame avec les colonnes RL0105A (CUBF) et RL0311A (logements)"""
+    root = ET.fromstring(xml_bytes)
+    
+    # On cherche toutes les "ligne" ou "record" — adapte selon structure XML exacte
+    # Exemple hypothétique :
+    rows = []
+    for ligne in root.findall(".//ligne"):  
+        code_cubf = ligne.findtext("RL0105A")
+        logements_str = ligne.findtext("RL0311A")
+        try:
+            logements = int(logements_str) if logements_str else 0
+        except:
+            logements = 0
+        
+        if code_cubf is not None:
+            rows.append({"RL0105A": code_cubf.strip(), "RL0311A": logements})
+
+    df = pd.DataFrame(rows)
+    return df
+
 mrc_links = fetch_mrc_roles()
 
 if not mrc_links.empty:
@@ -50,21 +69,35 @@ if not mrc_links.empty:
     selected_url = mrc_links.loc[mrc_links["MRC"] == selected_mrc, "URL"].values[0]
     st.markdown(f"📥 [Télécharger le rôle d’évaluation de {selected_mrc}]({selected_url})")
 
-    if st.button("Analyser le contenu du fichier ZIP"):
-        st.info("Téléchargement et lecture du fichier en cours...")
+    if st.button("Charger et analyser le fichier XML"):
         try:
-            response = requests.get(selected_url)
-            with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-                txt_files = [f for f in zip_file.namelist() if f.endswith(".txt")]
-                st.success(f"{len(txt_files)} fichier(s) texte trouvé(s) dans l’archive :")
-                for f in txt_files:
-                    st.write(f)
+            with st.spinner("Téléchargement et analyse du fichier XML en cours..."):
+                response = requests.get(selected_url)
+                response.raise_for_status()
 
-                if txt_files:
-                    with zip_file.open(txt_files[0]) as file:
-                        df = pd.read_csv(file, sep="|", encoding="latin1", dtype=str, nrows=1000)
-                        st.dataframe(df.head(20))
+                df_xml = parse_xml_to_df(response.content)
+
+                if df_xml.empty:
+                    st.warning("Aucune donnée valide trouvée dans le fichier XML.")
+                else:
+                    # Liste des codes CUBF uniques
+                    codes_cubf = sorted(df_xml["RL0105A"].unique())
+                    selected_codes = st.multiselect("Sélectionnez les codes CUBF à analyser", options=codes_cubf)
+
+                    if selected_codes:
+                        df_filtre = df_xml[df_xml["RL0105A"].isin(selected_codes)]
+
+                        nb_batiments = len(df_filtre)
+                        nb_logements = df_filtre["RL0311A"].sum()
+
+                        st.markdown(f"### Résultats pour les codes CUBF sélectionnés :")
+                        st.write(f"- **Nombre de bâtiments** : {nb_batiments}")
+                        st.write(f"- **Nombre de logements** : {nb_logements}")
+
+                        st.dataframe(df_filtre)
+                    else:
+                        st.info("Veuillez sélectionner au moins un code CUBF.")
         except Exception as e:
-            st.error(f"Erreur lors de la lecture du fichier : {e}")
+            st.error(f"Erreur lors de l’analyse du fichier : {e}")
 else:
     st.warning("Impossible de récupérer la liste des MRC. Veuillez réessayer plus tard.")
