@@ -1,3 +1,28 @@
+def parse_xml_to_df(xml_bytes):
+    import pandas as pd
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_bytes)
+
+    rows = []
+    # Chaque "ligne" est un enregistrement
+    for ligne in root.findall(".//ligne"):
+        record = {}
+        # On récupère toutes les colonnes visibles dans l'extrait
+        for col in ["VERSION", "RLM01A", "RLM02A", "RL0101Gx", "RL0101Ax", "RL0101Ex",
+                    "RL0101Fx", "RL0104A", "RL0104B", "RL0104C", "RL0105A",
+                    "RL0106A", "RL0107A", "RL0201Gx", "RL0201Hx"]:
+            el = ligne.find(col)
+            record[col] = el.text.strip() if el is not None and el.text else None
+        rows.append(record)
+
+    df = pd.DataFrame(rows)
+
+    # Conversion de colonnes numériques selon besoin, par exemple RL0106A, RL0107A
+    for col in ["RL0106A", "RL0107A"]:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+
+    return df
 import streamlit as st
 import pandas as pd
 import requests
