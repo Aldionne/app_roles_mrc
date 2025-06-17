@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
 import requests
-import zipfile
-import io
 import xml.etree.ElementTree as ET
+import io
 
 st.title("🔍 Explorer les rôles d’évaluation foncière du Québec")
 
@@ -42,19 +41,16 @@ def fetch_mrc_roles():
     df = df.sort_values("MRC").reset_index(drop=True)
     return df
 
-def analyze_xml_file(file_bytes):
-    """Analyse un fichier XML pour compter logements et bâtiments"""
-    tree = ET.parse(io.BytesIO(file_bytes))
-    root = tree.getroot()
+def analyze_xml_content(xml_bytes):
+    """Analyse le contenu XML et compte logements et bâtiments"""
+    root = ET.fromstring(xml_bytes)
 
-    # Exemple : hypothèse sur la structure XML, à adapter selon la vraie structure
-
-    # Compter les logements
-    logements = root.findall(".//logement")  # XPath à adapter
+    # A adapter selon la structure exacte du XML
+    # Exemple hypothétique :
+    logements = root.findall(".//logement")
     nb_logements = len(logements)
 
-    # Compter les bâtiments
-    batiments = root.findall(".//batiment")  # XPath à adapter
+    batiments = root.findall(".//batiment")
     nb_batiments = len(batiments)
 
     return nb_logements, nb_batiments
@@ -66,36 +62,23 @@ if not mrc_links.empty:
     selected_url = mrc_links.loc[mrc_links["MRC"] == selected_mrc, "URL"].values[0]
     st.markdown(f"📥 [Télécharger le rôle d’évaluation de {selected_mrc}]({selected_url})")
 
-    if st.button("Analyser le contenu du fichier ZIP (XML)"):
+    if st.button("Analyser le fichier XML"):
         try:
-            with st.spinner("Téléchargement et analyse du fichier en cours..."):
+            with st.spinner("Téléchargement et analyse du fichier XML en cours..."):
                 response = requests.get(selected_url)
                 response.raise_for_status()
 
-                with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-                    xml_files = [f for f in zip_file.namelist() if f.endswith(".xml")]
+                nb_logements, nb_batiments = analyze_xml_content(response.content)
 
-                    if not xml_files:
-                        st.warning("Aucun fichier XML trouvé dans l’archive ZIP.")
-                    else:
-                        st.success(f"{len(xml_files)} fichier(s) XML trouvé(s) dans l’archive :")
-                        for f in xml_files:
-                            st.write(f)
+                df_result = pd.DataFrame([{
+                    "MRC": selected_mrc,
+                    "Nombre de logements": nb_logements,
+                    "Nombre de bâtiments": nb_batiments
+                }])
 
-                        results = []
-                        for xml_file in xml_files:
-                            with zip_file.open(xml_file) as file:
-                                file_bytes = file.read()
-                                nb_logements, nb_batiments = analyze_xml_file(file_bytes)
-                                results.append({
-                                    "Fichier": xml_file,
-                                    "Nombre de logements": nb_logements,
-                                    "Nombre de bâtiments": nb_batiments
-                                })
-                        df_res = pd.DataFrame(results)
-                        st.dataframe(df_res)
+                st.dataframe(df_result)
+
         except Exception as e:
             st.error(f"Erreur lors de l’analyse du fichier : {e}")
-
 else:
     st.warning("Impossible de récupérer la liste des MRC. Veuillez réessayer plus tard.")
