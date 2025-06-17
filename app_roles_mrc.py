@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import xml.etree.ElementTree as ET
-import io
 
 st.title("🔍 Analyse des rôles d’évaluation foncière du Québec selon codes CUBF")
 
@@ -42,30 +41,30 @@ def fetch_mrc_roles():
     return df
 
 def parse_xml_to_df(xml_bytes):
-    """🔎 Parse le XML en DataFrame — inclut maintenant outils de débogage."""
+    """🔎 Parse le XML basé sur la vraie structure avec balises <RLUEx>."""
     try:
         root = ET.fromstring(xml_bytes)
     except Exception as e:
         st.error(f"❌ Impossible d'analyser le XML : {e}")
         return pd.DataFrame()
 
-    # DEBUG : Affiche les premiers caractères du fichier XML brut
+    # Aperçu brut du contenu XML
     st.subheader("🛠️ Aperçu brut du XML")
     st.code(xml_bytes[:1000], language="xml")
 
     rows = []
+    
+    # Chaque <RLUEx> correspond à une unité d’évaluation
+    for ue in root.findall(".//RLUEx"):
+        code_cubf = ue.findtext("RL0105A")
+        logements_str = ue.findtext("RL0311A")  # Peut être manquant
 
-    # ⚠️ Adapte ce nom à la vraie structure du XML si besoin (ex: 'donnee', 'record')
-    for ligne in root.findall(".//ligne"):
-        code_cubf = ligne.findtext("RL0105A")
-        logements_str = ligne.findtext("RL0311A")
-        
         try:
             logements = int(logements_str) if logements_str else 0
         except:
             logements = 0
 
-        if code_cubf is not None:
+        if code_cubf:
             rows.append({
                 "RL0105A": code_cubf.strip(),
                 "RL0311A": logements
@@ -73,17 +72,17 @@ def parse_xml_to_df(xml_bytes):
 
     df = pd.DataFrame(rows)
 
-    # DEBUG : Affiche un aperçu des données extraites
+    # Aperçu DataFrame
     st.subheader("📊 Aperçu des données extraites du XML")
-    st.write(f"Nombre total d’enregistrements extraits : {len(df)}")
+    st.write(f"Nombre total d’unités extraites : {len(df)}")
     if not df.empty:
         st.dataframe(df.head())
     else:
-        st.warning("❌ Aucune ligne valide extraite : vérifie les balises ou la structure XML.")
-    
+        st.warning("❌ Aucune unité valide trouvée. Vérifie les champs CUBF ou logements.")
+
     return df
 
-# Récupère les liens vers les rôles d’évaluation
+# Étape principale de l’application
 mrc_links = fetch_mrc_roles()
 
 if not mrc_links.empty:
@@ -100,7 +99,7 @@ if not mrc_links.empty:
                 df_xml = parse_xml_to_df(response.content)
 
                 if df_xml.empty:
-                    st.warning("⚠️ Aucune donnée valide trouvée dans le fichier XML. Essaie avec une autre MRC ou vérifie la structure XML.")
+                    st.warning("⚠️ Aucune donnée valide trouvée dans le fichier XML.")
                 else:
                     codes_cubf = sorted(df_xml["RL0105A"].unique())
                     selected_codes = st.multiselect("Sélectionnez les codes CUBF à analyser", options=codes_cubf)
@@ -118,7 +117,3 @@ if not mrc_links.empty:
                         st.dataframe(df_filtre)
                     else:
                         st.info("ℹ️ Veuillez sélectionner au moins un code CUBF.")
-        except Exception as e:
-            st.error(f"❌ Erreur lors de l’analyse du fichier : {e}")
-else:
-    st.warning("❌ Impossible de récupérer la liste des MRC. Veuillez réessayer plus tard.")
