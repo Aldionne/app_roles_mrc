@@ -50,13 +50,18 @@ def parse_xml_to_df(xml_bytes):
     for ue in root.findall(".//RLUEx"):
         code_cubf = ue.findtext("RL0105A")
         logements_str = ue.findtext("RL0311A")
+
         try:
             logements = int(logements_str) if logements_str else 0
         except:
             logements = 0
 
-        if code_cubf:
-            rows.append({"RL0105A": code_cubf.strip(), "RL0311A": logements})
+        # Inclure même si code CUBF vide
+        rows.append({
+            "RL0105A": code_cubf.strip() if code_cubf else "Inconnu",
+            "RL0311A": logements
+        })
+
     return pd.DataFrame(rows)
 
 # Initialisation
@@ -81,27 +86,28 @@ if st.button("📂 Charger et analyser le fichier XML"):
     except Exception as e:
         st.error(f"Erreur : {e}")
 
-# Section de filtrage
 df_xml = st.session_state.df_xml
 if df_xml is not None and not df_xml.empty:
+    st.subheader("🎯 Sélection des codes CUBF")
+
     codes_cubf = sorted(df_xml["RL0105A"].dropna().unique())
 
-    # Regroupement par milliers
+    # Regrouper par millier
     grouped = defaultdict(list)
     for code in codes_cubf:
         try:
-            millier = int(code) // 1000 * 1000
-            grouped[millier].append(code)
+            code_int = int(code)
+            millier = (code_int // 1000) * 1000
         except:
-            grouped["Autres"].append(code)
+            millier = "Inconnu"
+        grouped[millier].append(code)
 
-    st.subheader("🎯 Sélection des codes CUBF")
     with st.form("form_cubf"):
         select_all = st.checkbox("✅ Tout sélectionner", key="select_all")
         selected_codes = []
 
         for millier in sorted(grouped.keys()):
-            with st.expander(f"{millier}–{millier + 999}"):
+            with st.expander(f"{millier}–{millier + 999}" if isinstance(millier, int) else "Codes inconnus"):
                 cols = st.columns(4)
                 for idx, code in enumerate(sorted(grouped[millier])):
                     col = cols[idx % 4]
@@ -117,8 +123,8 @@ if df_xml is not None and not df_xml.empty:
             total_logements = df_filtre["RL0311A"].sum()
 
             st.markdown("### ✅ Résultats")
-            st.write(f"- **Nombre de bâtiments** : {total_batiments}")
-            st.write(f"- **Nombre de logements** : {total_logements}")
+            st.write(f"- **Nombre total d’unités sélectionnées** : {total_batiments}")
+            st.write(f"- **Nombre total de logements** : {total_logements}")
 
             df_resume = (
                 df_filtre.groupby("RL0105A")
