@@ -40,6 +40,18 @@ def fetch_mrc_roles():
     return df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "MRC", "lien": "URL"}).sort_values("MRC")
 
 def parse_xml_to_df(xml_bytes):
+    import re
+
+    def parse_int(text):
+        """Convertit du texte en entier, gère les cas avec espace ou virgule."""
+        try:
+            if text is None:
+                return 0
+            cleaned = re.sub(r"[^\d.]", "", text.replace(",", "."))
+            return int(float(cleaned)) if cleaned else 0
+        except:
+            return 0
+
     try:
         root = ET.fromstring(xml_bytes)
     except Exception as e:
@@ -48,27 +60,22 @@ def parse_xml_to_df(xml_bytes):
 
     rows = []
 
-    # ✅ Trouver toutes les unités d'évaluation, peu importe leur balise parente
-    for ue in root.iter():
-        # On identifie une unité d'évaluation comme un noeud qui contient au moins un code CUBF (RL0105A)
-        if ue.find("RL0105A") is not None:
+    # Balayer tous les éléments du XML
+    for elem in root.iter():
+        # Sélectionner ceux qui contiennent un code CUBF
+        if elem.find("RL0105A") is not None:
             row = {
-                "RL0105A": ue.findtext("RL0105A") or "Inconnu",  # Code CUBF
-                "RL0311A": ue.findtext("RL0311A"),               # Nb logements
-                "RL0315A": ue.findtext("RL0315A"),               # Valeur terrain
-                "RL0316A": ue.findtext("RL0316A"),               # Valeur immeuble
-                "RLM02A":  ue.findtext("RLM02A")                 # Année du rôle
+                "RL0105A": elem.findtext("RL0105A", "").strip() or "Inconnu",
+                "RL0311A": parse_int(elem.findtext("RL0311A")),
+                "RL0315A": parse_int(elem.findtext("RL0315A")),
+                "RL0316A": parse_int(elem.findtext("RL0316A")),
+                "RLM02A":  elem.findtext("RLM02A", "Inconnue").strip()
             }
-
-            # Nettoyage et conversions
-            for key in ["RL0311A", "RL0315A", "RL0316A"]:
-                try:
-                    row[key] = int(row[key]) if row[key] else 0
-                except:
-                    row[key] = 0
-
-            row["RL0105A"] = row["RL0105A"].strip()
             rows.append(row)
+
+    if not rows:
+        st.warning("⚠️ Aucune unité d’évaluation trouvée avec un code CUBF.")
+        return pd.DataFrame()
 
     return pd.DataFrame(rows)
 
