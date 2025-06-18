@@ -47,24 +47,28 @@ def parse_xml_to_df(xml_bytes):
         return pd.DataFrame()
 
     rows = []
-    for ue in root.findall(".//RLUEx"):
-        row = {
-            "RL0105A": ue.findtext("RL0105A") or "Inconnu",  # Code CUBF
-            "RL0311A": ue.findtext("RL0311A"),               # Nb logements
-            "RL0315A": ue.findtext("RL0315A"),               # Valeur terrain
-            "RL0316A": ue.findtext("RL0316A"),               # Valeur immeuble
-            "RLM02A":  ue.findtext("RLM02A")                 # Année du rôle
-        }
 
-        # Nettoyage et conversions
-        for key in ["RL0311A", "RL0315A", "RL0316A"]:
-            try:
-                row[key] = int(row[key]) if row[key] else 0
-            except:
-                row[key] = 0
+    # ✅ Trouver toutes les unités d'évaluation, peu importe leur balise parente
+    for ue in root.iter():
+        # On identifie une unité d'évaluation comme un noeud qui contient au moins un code CUBF (RL0105A)
+        if ue.find("RL0105A") is not None:
+            row = {
+                "RL0105A": ue.findtext("RL0105A") or "Inconnu",  # Code CUBF
+                "RL0311A": ue.findtext("RL0311A"),               # Nb logements
+                "RL0315A": ue.findtext("RL0315A"),               # Valeur terrain
+                "RL0316A": ue.findtext("RL0316A"),               # Valeur immeuble
+                "RLM02A":  ue.findtext("RLM02A")                 # Année du rôle
+            }
 
-        row["RL0105A"] = row["RL0105A"].strip()
-        rows.append(row)
+            # Nettoyage et conversions
+            for key in ["RL0311A", "RL0315A", "RL0316A"]:
+                try:
+                    row[key] = int(row[key]) if row[key] else 0
+                except:
+                    row[key] = 0
+
+            row["RL0105A"] = row["RL0105A"].strip()
+            rows.append(row)
 
     return pd.DataFrame(rows)
 
