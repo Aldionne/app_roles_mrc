@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import requests
 import xml.etree.ElementTree as ET
@@ -48,19 +48,23 @@ def parse_xml_to_df(xml_bytes):
 
     rows = []
     for ue in root.findall(".//RLUEx"):
-        code_cubf = ue.findtext("RL0105A")
-        logements_str = ue.findtext("RL0311A")
+        row = {
+            "RL0105A": ue.findtext("RL0105A") or "Inconnu",  # Code CUBF
+            "RL0311A": ue.findtext("RL0311A"),               # Nb logements
+            "RL0315A": ue.findtext("RL0315A"),               # Valeur terrain
+            "RL0316A": ue.findtext("RL0316A"),               # Valeur immeuble
+            "RLM02A":  ue.findtext("RLM02A")                 # Année du rôle
+        }
 
-        try:
-            logements = int(logements_str) if logements_str else 0
-        except:
-            logements = 0
+        # Nettoyage et conversions
+        for key in ["RL0311A", "RL0315A", "RL0316A"]:
+            try:
+                row[key] = int(row[key]) if row[key] else 0
+            except:
+                row[key] = 0
 
-        # Inclure même si code CUBF vide
-        rows.append({
-            "RL0105A": code_cubf.strip() if code_cubf else "Inconnu",
-            "RL0311A": logements
-        })
+        row["RL0105A"] = row["RL0105A"].strip()
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
@@ -119,20 +123,36 @@ if df_xml is not None and not df_xml.empty:
     if submitted:
         if selected_codes:
             df_filtre = df_xml[df_xml["RL0105A"].isin(selected_codes)]
-            total_batiments = len(df_filtre)
+
+            # ✅ Récupérer l'année du rôle (supposée constante)
+            annees_role = df_filtre["RLM02A"].dropna().unique()
+            st.markdown(f"**📅 Année du rôle d’évaluation :** `{', '.join(annees_role)}`")
+
+            # ✅ Statistiques globales
+            total_unites = len(df_filtre)
             total_logements = df_filtre["RL0311A"].sum()
+            moyenne_terrain = df_filtre["RL0315A"].mean()
+            moyenne_immeuble = df_filtre["RL0316A"].mean()
 
             st.markdown("### ✅ Résultats")
-            st.write(f"- **Nombre total d’unités sélectionnées** : {total_batiments}")
+            st.write(f"- **Nombre total d’unités d’évaluation sélectionnées** : {total_unites}")
             st.write(f"- **Nombre total de logements** : {total_logements}")
+            st.write(f"- **Valeur moyenne des terrains** : {moyenne_terrain:,.0f} $")
+            st.write(f"- **Valeur moyenne des immeubles** : {moyenne_immeuble:,.0f} $")
 
             df_resume = (
                 df_filtre.groupby("RL0105A")
-                .agg(nb_batiments=("RL0105A", "count"), nb_logements=("RL0311A", "sum"))
+                .agg(
+                    nb_unites=("RL0105A", "count"),
+                    nb_logements=("RL0311A", "sum"),
+                    valeur_terrain_moy=("RL0315A", "mean"),
+                    valeur_immeuble_moy=("RL0316A", "mean")
+                )
                 .reset_index()
                 .rename(columns={"RL0105A": "Code CUBF"})
             )
 
+            st.markdown("### 📋 Résumé par CUBF")
             st.dataframe(df_resume)
 
             with st.expander("🔍 Détails bruts des entrées filtrées"):
