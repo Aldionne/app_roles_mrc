@@ -53,11 +53,10 @@ def parse_xml_to_df(xml_bytes):
     st.code(xml_bytes[:1000], language="xml")
 
     rows = []
-    
-    # Chaque <RLUEx> correspond à une unité d’évaluation
+
     for ue in root.findall(".//RLUEx"):
         code_cubf = ue.findtext("RL0105A")
-        logements_str = ue.findtext("RL0311A")  # Peut être manquant
+        logements_str = ue.findtext("RL0311A")
 
         try:
             logements = int(logements_str) if logements_str else 0
@@ -72,7 +71,6 @@ def parse_xml_to_df(xml_bytes):
 
     df = pd.DataFrame(rows)
 
-    # Aperçu DataFrame
     st.subheader("📊 Aperçu des données extraites du XML")
     st.write(f"Nombre total d’unités extraites : {len(df)}")
     if not df.empty:
@@ -101,21 +99,46 @@ if not mrc_links.empty:
                 if df_xml.empty:
                     st.warning("⚠️ Aucune donnée valide trouvée dans le fichier XML.")
                 else:
+                    st.subheader("🎯 Sélection des codes CUBF à analyser")
+
                     codes_cubf = sorted(df_xml["RL0105A"].unique())
-                    selected_codes = st.multiselect("Sélectionnez les codes CUBF à analyser", options=codes_cubf)
 
-                    if selected_codes:
-                        df_filtre = df_xml[df_xml["RL0105A"].isin(selected_codes)]
-                        nb_batiments = len(df_filtre)
-                        nb_logements = df_filtre["RL0311A"].sum()
+                    with st.form("form_cubf"):
+                        select_all = st.checkbox("✅ Sélectionner tous les codes CUBF")
 
-                        st.markdown("### ✅ Résultats pour les codes CUBF sélectionnés :")
-                        st.write(f"- **Nombre de bâtiments** : {nb_batiments}")
-                        st.write(f"- **Nombre de logements** : {nb_logements}")
+                        checked_codes = []
+                        for code in codes_cubf:
+                            if select_all:
+                                checked = True
+                            else:
+                                checked = st.checkbox(f"Code {code}", key=f"code_{code}")
+                            if checked:
+                                checked_codes.append(code)
 
-                        st.dataframe(df_filtre)
-                    else:
-                        st.info("ℹ️ Veuillez sélectionner au moins un code CUBF.")
+                        submitted = st.form_submit_button("Analyser les codes sélectionnés")
+
+                    if submitted:
+                        if checked_codes:
+                            df_filtre = df_xml[df_xml["RL0105A"].isin(checked_codes)]
+                            nb_total = len(df_filtre)
+                            nb_logements = df_filtre["RL0311A"].sum()
+
+                            st.markdown("### ✅ Résultats globaux pour les codes CUBF sélectionnés :")
+                            st.write(f"- **Nombre total de bâtiments (entrées)** : {nb_total}")
+                            st.write(f"- **Nombre total de logements** : {nb_logements}")
+
+                            st.markdown("### 📌 Détail par code CUBF sélectionné :")
+                            resume = df_filtre.groupby("RL0105A").agg(
+                                nombre_batiments=("RL0105A", "count"),
+                                total_logements=("RL0311A", "sum")
+                            ).reset_index().rename(columns={"RL0105A": "Code CUBF"})
+
+                            st.dataframe(resume)
+
+                            with st.expander("🔍 Voir les données filtrées complètes"):
+                                st.dataframe(df_filtre)
+                        else:
+                            st.info("ℹ️ Veuillez sélectionner au moins un code CUBF.")
         except Exception as e:
             st.error(f"❌ Erreur lors de l’analyse du fichier : {e}")
 else:
