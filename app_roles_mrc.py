@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 
 st.set_page_config(layout="wide")
-st.title("🔍 Analyse des rôles d’évaluation foncière du Québec selon codes CUBF")
+st.title("🔍 Analyse des rôles d’évaluation foncière du Québec par codes CUBF")
 
 @st.cache_data(ttl=3600)
 def fetch_mrc_roles():
