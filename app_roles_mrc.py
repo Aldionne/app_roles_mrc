@@ -1,35 +1,30 @@
 import streamlit as st
 import pandas as pd
-import requests
 import xml.etree.ElementTree as ET
-import re
+import requests
+from io import BytesIO
 from collections import defaultdict
+import re
 
 st.set_page_config(layout="wide")
-st.title("🔍 Analyse des rôles d’évaluation foncière du Québec par codes CUBF")
+st.title("🏠 Analyse des rôles d’évaluation foncière par codes CUBF")
 
-# ---------- Chargement de la liste des MRC et liens XML ----------
+# 1. Téléchargement des MRC et liens
 @st.cache_data(ttl=3600)
 def fetch_mrc_roles():
+    url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search"
     resource_id = "d2db6102-9215-4abc-9b5b-2c37f2e12618"
-    base_url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search"
     records = []
     offset = 0
     limit = 100
 
     while True:
-        url = f"{base_url}?resource_id={resource_id}&limit={limit}&offset={offset}"
-        response = requests.get(url)
-        if response.status_code != 200:
-            st.error("❌ Erreur lors du téléchargement de la liste des MRC.")
+        r = requests.get(f"{url}?resource_id={resource_id}&limit={limit}&offset={offset}")
+        if r.status_code != 200:
             return pd.DataFrame()
-        data = response.json()["result"]
-
-        if "records" not in data or len(data["records"]) == 0:
-            return pd.DataFrame()
-
-        records.extend(data["records"])
-        if len(data["records"]) < limit:
+        out = r.json()["result"]
+        records.extend(out["records"])
+        if len(out["records"]) < limit:
             break
         offset += limit
 
@@ -38,54 +33,47 @@ def fetch_mrc_roles():
     return df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "MRC", "lien": "URL"}).sort_values("MRC")
 
 
-# ---------- Lecture et extraction XML ----------
-def parse_xml_to_df(xml_bytes):
-    def parse_int(text):
-        try:
-            if text is None:
-                return 0
-            cleaned = re.sub(r"[^\d.]", "", text.replace(",", "."))
-            return int(float(cleaned)) if cleaned else 0
-        except:
-            return 0
-
-    def parse_float(text):
-        try:
-            if text is None:
-                return 0.0
-            cleaned = re.sub(r"[^\d.]", "", text.replace(",", "."))
-            return float(cleaned) if cleaned else 0.0
-        except:
-            return 0.0
-
+# 2. Lecture du XML par RL0101Ax
+def parse_units_from_rl0101ax(xml_bytes):
     try:
         root = ET.fromstring(xml_bytes)
     except Exception as e:
-        st.error(f"❌ Erreur lors de l'analyse XML : {e}")
+        st.error(f"Erreur lors du chargement du XML : {e}")
         return pd.DataFrame()
 
-    rows = []
-    for elem in root.iter():
-        cubf_elem = elem.find("RL0105A")
-        if cubf_elem is not None:
-            row = {
-                "RL0105A": cubf_elem.text.strip() if cubf_elem.text else "Inconnu",
-                "RL0311A": parse_int(elem.findtext("RL0311A")),
-                "RL0315A": parse_float(elem.findtext("RL0315A")),
-                "RL0316A": parse_float(elem.findtext("RL0316A")),
-                "RLM02A": elem.findtext("RLM02A", "Inconnue").strip()
-            }
-            rows.append(row)
+    data = []
+    for elem in root.findall(".//RL0101Ax"):
+        record = {}
+        for sub in elem.iter():
+            tag = sub.tag
+            text = sub.text.strip() if sub.text else ""
+            if tag in ["RL0105A", "RL0311A", "RL0315A", "RL0316A", "RLM02A"]:
+                record[tag] = text
 
-    return pd.DataFrame(rows)
+        def clean(val):
+            try:
+                return float(val.replace(",", ".")) if val else 0.0
+            except:
+                return 0.0
+
+        data.append({
+            "RL0105A": record.get("RL0105A", "Inconnu"),
+            "RL0311A": clean(record.get("RL0311A")),
+            "RL0315A": clean(record.get("RL0315A")),
+            "RL0316A": clean(record.get("RL0316A")),
+            "RLM02A": record.get("RLM02A", "Inconnue")
+        })
+
+    return pd.DataFrame(data)
 
 
-# ---------- Interface Streamlit ----------
+# 3. Interface utilisateur
 if "df_xml" not in st.session_state:
     st.session_state.df_xml = None
 
 df_mrc = fetch_mrc_roles()
 if df_mrc.empty:
+    st.error("Impossible de charger les MRC.")
     st.stop()
 
 selected_mrc = st.selectbox("📍 Choisissez une MRC", df_mrc["MRC"])
@@ -94,85 +82,77 @@ st.markdown(f"📥 [Télécharger le fichier XML de {selected_mrc}]({selected_ur
 
 if st.button("📂 Charger et analyser le fichier XML"):
     try:
-        with st.spinner("Chargement du fichier XML..."):
-            response = requests.get(selected_url)
-            response.raise_for_status()
-            st.session_state.df_xml = parse_xml_to_df(response.content)
+        with st.spinner("Chargement en cours..."):
+            r = requests.get(selected_url)
+            r.raise_for_status()
+            df = parse_units_from_rl0101ax(r.content)
+            st.session_state.df_xml = df
         st.success("✅ Fichier XML chargé avec succès.")
     except Exception as e:
         st.error(f"Erreur : {e}")
 
 df_xml = st.session_state.df_xml
-
 if df_xml is not None and not df_xml.empty:
-    st.write(f"🔢 **Nombre total d’unités d’évaluation dans le fichier** : {len(df_xml)}")
-    annee_roles = df_xml["RLM02A"].dropna().unique()
-    st.markdown(f"📆 **Année du rôle d’évaluation :** {', '.join(annee_roles)}")
+    st.write(f"📊 **Nombre total d’unités :** {len(df_xml)}")
+    annee = df_xml["RLM02A"].dropna().unique()
+    st.write(f"📅 **Année du rôle :** {', '.join(annee)}")
 
+    # Sélection des CUBF
     st.subheader("🎯 Sélection des codes CUBF")
-
-    codes_cubf = sorted(df_xml["RL0105A"].dropna().unique())
+    codes_cubf = sorted(df_xml["RL0105A"].unique())
 
     grouped = defaultdict(list)
     for code in codes_cubf:
         try:
-            code_int = int(code)
-            if 1000 <= code_int <= 9999:
-                millier = (code_int // 1000) * 1000
-            else:
-                millier = "Hors-plage"
+            val = int(code)
+            millier = (val // 1000) * 1000
         except:
-            millier = "Inconnu"
+            millier = "Autres"
         grouped[millier].append(code)
 
-    with st.form("form_cubf"):
+    with st.form("filter_form"):
         select_all = st.checkbox("✅ Tout sélectionner", key="select_all")
-        selected_codes = []
-
-        for millier in sorted(grouped.keys()):
-            with st.expander(f"{millier}–{millier + 999}" if isinstance(millier, int) else f"{millier}"):
+        selected = []
+        for group in sorted(grouped.keys()):
+            with st.expander(f"{group} – {group + 999}" if isinstance(group, int) else str(group)):
                 cols = st.columns(4)
-                for idx, code in enumerate(sorted(grouped[millier])):
-                    col = cols[idx % 4]
-                    if select_all or col.checkbox(code, key=f"code_{code}"):
-                        selected_codes.append(code)
-
-        submitted = st.form_submit_button("📊 Analyser les codes sélectionnés")
+                for i, code in enumerate(sorted(grouped[group])):
+                    col = cols[i % 4]
+                    if select_all or col.checkbox(code, key=f"cb_{code}"):
+                        selected.append(code)
+        submitted = st.form_submit_button("📊 Analyser")
 
     if submitted:
-        if selected_codes:
-            df_filtre = df_xml[df_xml["RL0105A"].isin(selected_codes)]
-
-            total_batiments = len(df_filtre)
-            total_logements = df_filtre["RL0311A"].sum()
-            moyenne_terrain = df_filtre["RL0315A"].mean()
-            moyenne_immeuble = df_filtre["RL0316A"].mean()
-
-            st.markdown("### ✅ Résultats")
-            st.write(f"- **Nombre total d’unités d’évaluation sélectionnées** : {total_batiments}")
-            st.write(f"- **Nombre total de logements** : {total_logements}")
-            st.write(f"- **Valeur moyenne des terrains** : {moyenne_terrain:,.0f} $")
-            st.write(f"- **Valeur moyenne des immeubles** : {moyenne_immeuble:,.0f} $")
-
-            df_resume = (
-                df_filtre.groupby("RL0105A")
-                .agg(
-                    nb_unites=("RL0105A", "count"),
-                    nb_logements=("RL0311A", "sum"),
-                    val_moy_terrain=("RL0315A", "mean"),
-                    val_moy_immeuble=("RL0316A", "mean")
-                )
-                .reset_index()
-                .rename(columns={"RL0105A": "Code CUBF"})
-                .sort_values("Code CUBF")
-            )
-
-            st.dataframe(df_resume)
-
-            with st.expander("📄 Voir toutes les entrées filtrées"):
-                st.dataframe(df_filtre)
-
-        else:
+        if not selected:
             st.info("ℹ️ Veuillez sélectionner au moins un code CUBF.")
+            st.stop()
+
+        df_sel = df_xml[df_xml["RL0105A"].isin(selected)]
+
+        # Résumé
+        st.markdown("### ✅ Résultats globaux")
+        st.write(f"- **Unités d’évaluation :** {len(df_sel)}")
+        st.write(f"- **Total de logements :** {df_sel['RL0311A'].sum():,.0f}")
+        st.write(f"- **Valeur moyenne des terrains :** {df_sel['RL0315A'].mean():,.0f} $")
+        st.write(f"- **Valeur moyenne des immeubles :** {df_sel['RL0316A'].mean():,.0f} $")
+
+        # Tableau par CUBF
+        df_res = (
+            df_sel.groupby("RL0105A")
+            .agg(
+                nb_unites=("RL0105A", "count"),
+                total_logements=("RL0311A", "sum"),
+                val_terrain_moy=("RL0315A", "mean"),
+                val_immeuble_moy=("RL0316A", "mean")
+            )
+            .reset_index()
+            .rename(columns={"RL0105A": "Code CUBF"})
+        )
+
+        st.markdown("### 📋 Résumé par CUBF")
+        st.dataframe(df_res)
+
+        with st.expander("🔍 Voir les entrées brutes"):
+            st.dataframe(df_sel)
 else:
-    st.info("📄 Aucune donnée chargée. Cliquez sur le bouton ci-dessus pour analyser le fichier XML.")
+    st.info("📄 Aucune donnée chargée.")
