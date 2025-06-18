@@ -18,7 +18,9 @@ def fetch_mrc_roles():
     while True:
         url = f"{base_url}?resource_id={resource_id}&limit={limit}&offset={offset}"
         response = requests.get(url)
-        response.raise_for_status()
+        if response.status_code != 200:
+            st.error("❌ Erreur lors du téléchargement de la liste des MRC.")
+            return pd.DataFrame()
         data = response.json()["result"]
 
         if "records" not in data or len(data["records"]) == 0:
@@ -32,23 +34,104 @@ def fetch_mrc_roles():
 
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip().str.lower()
-
     if "nom du territoire" not in df.columns or "lien" not in df.columns:
-        st.error("❌ Colonnes manquantes.")
-        st.write("Colonnes disponibles :", df.columns.tolist())
+        st.error("❌ Colonnes manquantes dans les données.")
         return pd.DataFrame()
-
-    df = df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "MRC", "lien": "URL"})
-    return df.sort_values("MRC").reset_index(drop=True)
+    return df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "MRC", "lien": "URL"}).sort_values("MRC")
 
 def parse_xml_to_df(xml_bytes):
     try:
         root = ET.fromstring(xml_bytes)
     except Exception as e:
-        st.error(f"❌ Erreur XML : {e}")
+        st.error(f"❌ Erreur lors de l'analyse XML : {e}")
         return pd.DataFrame()
 
     rows = []
     for ue in root.findall(".//RLUEx"):
         code_cubf = ue.findtext("RL0105A")
-        logements_str =_
+        logements_str = ue.findtext("RL0311A")
+        try:
+            logements = int(logements_str) if logements_str else 0
+        except:
+            logements = 0
+
+        if code_cubf:
+            rows.append({"RL0105A": code_cubf.strip(), "RL0311A": logements})
+    return pd.DataFrame(rows)
+
+# Initialisation
+if "df_xml" not in st.session_state:
+    st.session_state.df_xml = None
+
+df_mrc = fetch_mrc_roles()
+if df_mrc.empty:
+    st.stop()
+
+selected_mrc = st.selectbox("📍 Choisissez une MRC", df_mrc["MRC"])
+selected_url = df_mrc[df_mrc["MRC"] == selected_mrc]["URL"].values[0]
+st.markdown(f"📥 [Télécharger le fichier XML de {selected_mrc}]({selected_url})")
+
+if st.button("📂 Charger et analyser le fichier XML"):
+    try:
+        with st.spinner("Chargement du fichier XML..."):
+            response = requests.get(selected_url)
+            response.raise_for_status()
+            st.session_state.df_xml = parse_xml_to_df(response.content)
+        st.success("✅ Fichier XML chargé avec succès.")
+    except Exception as e:
+        st.error(f"Erreur : {e}")
+
+# Section de filtrage
+df_xml = st.session_state.df_xml
+if df_xml is not None and not df_xml.empty:
+    codes_cubf = sorted(df_xml["RL0105A"].dropna().unique())
+
+    # Regroupement par milliers
+    grouped = defaultdict(list)
+    for code in codes_cubf:
+        try:
+            millier = int(code) // 1000 * 1000
+            grouped[millier].append(code)
+        except:
+            grouped["Autres"].append(code)
+
+    st.subheader("🎯 Sélection des codes CUBF")
+    with st.form("form_cubf"):
+        select_all = st.checkbox("✅ Tout sélectionner", key="select_all")
+        selected_codes = []
+
+        for millier in sorted(grouped.keys()):
+            with st.expander(f"{millier}–{millier + 999}"):
+                cols = st.columns(4)
+                for idx, code in enumerate(sorted(grouped[millier])):
+                    col = cols[idx % 4]
+                    if select_all or col.checkbox(code, key=f"code_{code}"):
+                        selected_codes.append(code)
+
+        submitted = st.form_submit_button("📊 Analyser les codes sélectionnés")
+
+    if submitted:
+        if selected_codes:
+            df_filtre = df_xml[df_xml["RL0105A"].isin(selected_codes)]
+            total_batiments = len(df_filtre)
+            total_logements = df_filtre["RL0311A"].sum()
+
+            st.markdown("### ✅ Résultats")
+            st.write(f"- **Nombre de bâtiments** : {total_batiments}")
+            st.write(f"- **Nombre de logements** : {total_logements}")
+
+            df_resume = (
+                df_filtre.groupby("RL0105A")
+                .agg(nb_batiments=("RL0105A", "count"), nb_logements=("RL0311A", "sum"))
+                .reset_index()
+                .rename(columns={"RL0105A": "Code CUBF"})
+            )
+
+            st.dataframe(df_resume)
+
+            with st.expander("🔍 Détails bruts des entrées filtrées"):
+                st.dataframe(df_filtre)
+        else:
+            st.info("ℹ️ Veuillez sélectionner au moins un code CUBF.")
+else:
+    st.info("📄 Aucune donnée chargée. Cliquez sur le bouton ci-dessus pour analyser le fichier XML.")
