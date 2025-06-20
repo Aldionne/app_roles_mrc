@@ -9,9 +9,9 @@ import re
 st.set_page_config(layout="wide")
 st.title("🏠 Analyse des rôles d'évaluation foncière par codes CUBF")
 
-# 1. Téléchargement des MRC et liens
+# 1. Téléchargement des territoires (MRC et municipalités) et liens
 @st.cache_data(ttl=3600)
-def fetch_mrc_roles():
+def fetch_territories():
     url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search"
     resource_id = "d2db6102-9215-4abc-9b5b-2c37f2e12618"
     records = []
@@ -30,7 +30,42 @@ def fetch_mrc_roles():
 
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip().str.lower()
-    return df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "MRC", "lien": "URL"}).sort_values("MRC")
+    df = df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "Territoire", "lien": "URL"})
+    
+    # Identifier les MRC vs Municipalités basé sur les patterns de noms
+    def classify_territory(name):
+        name_upper = name.upper()
+        # Patterns typiques des MRC
+        mrc_indicators = [
+            "MRC", "M.R.C.", "MUNICIPALITÉ RÉGIONALE", "REGIONAL COUNTY",
+            "COMMUNAUTÉ MÉTROPOLITAINE", "AGGLOMÉRATION"
+        ]
+        
+        # Patterns typiques des municipalités
+        municipality_indicators = [
+            "VILLE DE", "CITY OF", "MUNICIPALITY OF", "MUNICIPALITÉ DE",
+            "CANTON DE", "TOWNSHIP OF", "VILLAGE DE", "VILLAGE OF",
+            "PAROISSE DE", "PARISH OF"
+        ]
+        
+        for indicator in mrc_indicators:
+            if indicator in name_upper:
+                return "MRC"
+        
+        for indicator in municipality_indicators:
+            if indicator in name_upper:
+                return "Municipalité"
+        
+        # Heuristiques supplémentaires
+        # Les noms très courts sont souvent des municipalités
+        if len(name.split()) <= 2 and not any(x in name_upper for x in ["MRC", "COMMUNAUTÉ"]):
+            return "Municipalité"
+        
+        # Par défaut, considérer comme municipalité
+        return "Municipalité"
+    
+    df["Type"] = df["Territoire"].apply(classify_territory)
+    return df.sort_values(["Type", "Territoire"])
 
 
 # 2. Lecture du XML corrigée pour la structure RLUEx
@@ -97,18 +132,56 @@ def parse_units_from_xml(xml_bytes):
     return pd.DataFrame(data)
 
 
-# 3. Interface utilisateur
+# 3. Interface utilisateur avec filtres par type de territoire
 if "df_xml" not in st.session_state:
     st.session_state.df_xml = None
 
-df_mrc = fetch_mrc_roles()
-if df_mrc.empty:
-    st.error("Impossible de charger les MRC.")
+df_territories = fetch_territories()
+if df_territories.empty:
+    st.error("Impossible de charger les territoires.")
     st.stop()
 
-selected_mrc = st.selectbox("📍 Choisissez une MRC", df_mrc["MRC"])
-selected_url = df_mrc[df_mrc["MRC"] == selected_mrc]["URL"].values[0]
-st.markdown(f"📥 [Télécharger le fichier XML de {selected_mrc}]({selected_url})")
+# Filtres pour type de territoire
+st.subheader("🏛️ Sélection du territoire")
+
+col1, col2 = st.columns([1, 3])
+
+with col1:
+    territory_type = st.selectbox(
+        "Type de territoire",
+        ["Tous", "MRC", "Municipalité"],
+        help="MRC = Municipalités Régionales de Comté (regroupent plusieurs municipalités)\nMunicipalité = Villes, villages, cantons individuels"
+    )
+
+# Filtrer selon le type sélectionné
+if territory_type == "Tous":
+    df_filtered = df_territories
+else:
+    df_filtered = df_territories[df_territories["Type"] == territory_type]
+
+with col2:
+    if not df_filtered.empty:
+        selected_territory = st.selectbox(
+            f"📍 Choisissez un territoire ({len(df_filtered)} disponibles)",
+            df_filtered["Territoire"],
+            format_func=lambda x: f"🏛️ {x}" if df_territories[df_territories["Territoire"] == x]["Type"].iloc[0] == "MRC" else f"🏘️ {x}"
+        )
+        selected_url = df_filtered[df_filtered["Territoire"] == selected_territory]["URL"].values[0]
+        selected_type = df_filtered[df_filtered["Territoire"] == selected_territory]["Type"].values[0]
+        
+        st.markdown(f"📋 **Type :** {selected_type}")
+        st.markdown(f"📥 [Télécharger le fichier XML de {selected_territory}]({selected_url})")
+    else:
+        st.warning(f"Aucun territoire de type '{territory_type}' trouvé.")
+        st.stop()
+
+# Statistiques des territoires
+with st.expander("📊 Statistiques des territoires"):
+    type_counts = df_territories["Type"].value_counts()
+    for territory_type, count in type_counts.items():
+        st.write(f"- **{territory_type}** : {count} territoires")
+    
+    st.write(f"- **Total** : {len(df_territories)} territoires")
 
 if st.button("📂 Charger et analyser le fichier XML"):
     try:
@@ -219,7 +292,7 @@ if df_xml is not None and not df_xml.empty:
         st.download_button(
             label="📥 Télécharger le résumé (CSV)",
             data=csv,
-            file_name=f"analyse_cubf_{selected_mrc.replace(' ', '_')}.csv",
+            file_name=f"analyse_cubf_{selected_territory.replace(' ', '_')}.csv",
             mime="text/csv"
         )
 
@@ -231,7 +304,7 @@ if df_xml is not None and not df_xml.empty:
             st.download_button(
                 label="📥 Télécharger les données brutes (CSV)",
                 data=csv_raw,
-                file_name=f"donnees_brutes_{selected_mrc.replace(' ', '_')}.csv",
+                file_name=f"donnees_brutes_{selected_territory.replace(' ', '_')}.csv",
                 mime="text/csv"
             )
 
