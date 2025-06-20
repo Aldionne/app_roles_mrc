@@ -9,7 +9,98 @@ import re
 st.set_page_config(layout="wide")
 st.title("🏠 Analyse des rôles d'évaluation foncière par codes CUBF")
 
-# 1. Téléchargement des territoires (MRC et municipalités) et liens
+# --- Dictionnaire MRC -> Région administrative ---
+mrc_to_region = {
+    "Abitibi": "Abitibi-Témiscamingue",
+    "Abitibi-Ouest": "Abitibi-Témiscamingue",
+    "Acton": "Montérégie",
+    "Antoine-Labelle": "Laurentides",
+    "Argenteuil": "Laurentides",
+    "Arthabaska": "Centre-du-Québec",
+    "Avignon": "Gaspésie–Îles-de-la-Madeleine",
+    "Beauce-Centre": "Chaudière-Appalaches",
+    "Beauce-Sartigan": "Chaudière-Appalaches",
+    "Beauharnois-Salaberry": "Montérégie",
+    "Bécancour": "Centre-du-Québec",
+    "Bellechasse": "Chaudière-Appalaches",
+    "Bonaventure": "Gaspésie–Îles-de-la-Madeleine",
+    "Brome-Missisquoi": "Estrie",
+    "Caniapiscau": "Côte-Nord",
+    "Charlevoix": "Capitale-Nationale",
+    "Charlevoix-Est": "Capitale-Nationale",
+    "Coaticook": "Estrie",
+    "D’Autray": "Lanaudière",
+    "Deux-Montagnes": "Laurentides",
+    "Drummond": "Centre-du-Québec",
+    "Joliette": "Lanaudière",
+    "Kamouraska": "Bas-Saint-Laurent",
+    "L’Assomption": "Lanaudière",
+    "L’Érable": "Centre-du-Québec",
+    "L’Île-d’Orléans": "Capitale-Nationale",
+    "L’Islet": "Chaudière-Appalaches",
+    "La Côte-de-Beaupré": "Capitale-Nationale",
+    "La Côte-de-Gaspé": "Gaspésie–Îles-de-la-Madeleine",
+    "La Haute-Côte-Nord": "Côte-Nord",
+    "La Haute-Gaspésie": "Gaspésie–Îles-de-la-Madeleine",
+    "La Haute-Yamaska": "Estrie",
+    "La Jacques-Cartier": "Capitale-Nationale",
+    "La Matanie": "Bas-Saint-Laurent",
+    "La Matapédia": "Bas-Saint-Laurent",
+    "La Mitis": "Bas-Saint-Laurent",
+    "La Nouvelle-Beauce": "Chaudière-Appalaches",
+    "La Rivière-du-Nord": "Laurentides",
+    "La Vallée-de-la-Gatineau": "Outaouais",
+    "La Vallée-de-l’Or": "Abitibi-Témiscamingue",
+    "La Vallée-du-Richelieu": "Montérégie",
+    "Lac-Saint-Jean-Est": "Saguenay–Lac-Saint-Jean",
+    "Le Domaine-du-Roy": "Saguenay–Lac-Saint-Jean",
+    "Le Fjord-du-Saguenay": "Saguenay–Lac-Saint-Jean",
+    "Le Golfe-du-Saint-Laurent": "Côte-Nord",
+    "Le Granit": "Estrie",
+    "Le Haut-Richelieu": "Montérégie",
+    "Le Haut-Saint-François": "Estrie",
+    "Le Haut-Saint-Laurent": "Montérégie",
+    "Le Rocher-Percé": "Gaspésie–Îles-de-la-Madeleine",
+    "Le Val-Saint-François": "Estrie",
+    "Les Appalaches": "Chaudière-Appalaches",
+    "Les Basques": "Bas-Saint-Laurent",
+    "Les Chenaux": "Mauricie",
+    "Les Collines-de-l’Outaouais": "Outaouais",
+    "Les Etchemins": "Chaudière-Appalaches",
+    "Les Jardins-de-Napierville": "Montérégie",
+    "Les Laurentides": "Laurentides",
+    "Les Maskoutains": "Montérégie",
+    "Les Moulins": "Lanaudière",
+    "Les Pays-d’en-Haut": "Laurentides",
+    "Les Sources": "Estrie",
+    "Lotbinière": "Chaudière-Appalaches",
+    "Manicouagan": "Côte-Nord",
+    "Marguerite-D’Youville": "Montérégie",
+    "Maria-Chapdelaine": "Saguenay–Lac-Saint-Jean",
+    "Maskinongé": "Mauricie",
+    "Matawinie": "Lanaudière",
+    "Mékinac": "Mauricie",
+    "Memphrémagog": "Estrie",
+    "Minganie": "Côte-Nord",
+    "Montcalm": "Lanaudière",
+    "Montmagny": "Chaudière-Appalaches",
+    "Nicolet-Yamaska": "Centre-du-Québec",
+    "Papineau": "Outaouais",
+    "Pierre-De Saurel": "Montérégie",
+    "Pontiac": "Outaouais",
+    "Portneuf": "Capitale-Nationale",
+    "Rimouski-Neigette": "Bas-Saint-Laurent",
+    "Rivière-du-Loup": "Bas-Saint-Laurent",
+    "Roussillon": "Montérégie",
+    "Rouville": "Montérégie",
+    "Sept-Rivières": "Côte-Nord",
+    "Témiscamingue": "Abitibi-Témiscamingue",
+    "Témiscouata": "Bas-Saint-Laurent",
+    "Thérèse-De Blainville": "Laurentides",
+    "Vaudreuil-Soulanges": "Montérégie"
+}
+
+# 1. Chargement des territoires
 @st.cache_data(ttl=3600)
 def fetch_territories():
     url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search"
@@ -17,7 +108,6 @@ def fetch_territories():
     records = []
     offset = 0
     limit = 100
-
     while True:
         r = requests.get(f"{url}?resource_id={resource_id}&limit={limit}&offset={offset}")
         if r.status_code != 200:
@@ -27,45 +117,50 @@ def fetch_territories():
         if len(out["records"]) < limit:
             break
         offset += limit
-
     df = pd.DataFrame(records)
     df.columns = df.columns.str.strip().str.lower()
     df = df[["nom du territoire", "lien"]].rename(columns={"nom du territoire": "Territoire", "lien": "URL"})
-    
-    # Identifier les MRC vs Municipalités basé sur les patterns de noms
     def classify_territory(name):
         name_upper = name.upper()
-        # Patterns typiques des MRC
-        mrc_indicators = [
-            "MRC", "M.R.C.", "MUNICIPALITÉ RÉGIONALE", "REGIONAL COUNTY",
-            "COMMUNAUTÉ MÉTROPOLITAINE", "AGGLOMÉRATION"
-        ]
-        
-        # Patterns typiques des municipalités
-        municipality_indicators = [
-            "VILLE DE", "CITY OF", "MUNICIPALITY OF", "MUNICIPALITÉ DE",
-            "CANTON DE", "TOWNSHIP OF", "VILLAGE DE", "VILLAGE OF",
-            "PAROISSE DE", "PARISH OF"
-        ]
-        
+        mrc_indicators = ["MRC", "M.R.C.", "MUNICIPALITÉ RÉGIONALE", "REGIONAL COUNTY", "COMMUNAUTÉ MÉTROPOLITAINE", "AGGLOMÉRATION"]
+        municipality_indicators = ["VILLE DE", "CITY OF", "MUNICIPALITY OF", "MUNICIPALITÉ DE", "CANTON DE", "TOWNSHIP OF", "VILLAGE DE", "VILLAGE OF", "PAROISSE DE", "PARISH OF"]
         for indicator in mrc_indicators:
             if indicator in name_upper:
                 return "MRC"
-        
         for indicator in municipality_indicators:
             if indicator in name_upper:
                 return "Municipalité"
-        
-        # Heuristiques supplémentaires
-        # Les noms très courts sont souvent des municipalités
         if len(name.split()) <= 2 and not any(x in name_upper for x in ["MRC", "COMMUNAUTÉ"]):
             return "Municipalité"
-        
-        # Par défaut, considérer comme municipalité
         return "Municipalité"
-    
     df["Type"] = df["Territoire"].apply(classify_territory)
+    df["Région"] = df["Territoire"].apply(lambda x: mrc_to_region.get(x, "Inconnue"))
     return df.sort_values(["Type", "Territoire"])
+
+# Interface de sélection
+st.subheader("🏛️ Sélection du territoire")
+df_territories = fetch_territories()
+if df_territories.empty:
+    st.error("Impossible de charger les territoires.")
+    st.stop()
+col1, col2, col3 = st.columns([1, 2, 2])
+with col1:
+    territory_type = st.selectbox("Type de territoire", ["Tous", "MRC", "Municipalité"])
+with col2:
+    region_list = ["Toutes"] + sorted(df_territories["Région"].unique())
+    selected_region = st.selectbox("Région administrative", region_list)
+filtered_df = df_territories.copy()
+if territory_type != "Tous":
+    filtered_df = filtered_df[filtered_df["Type"] == territory_type]
+if selected_region != "Toutes":
+    filtered_df = filtered_df[filtered_df["Région"] == selected_region]
+with col3:
+    selected_territory = st.selectbox("📍 Territoire", filtered_df["Territoire"])
+selected_row = filtered_df[filtered_df["Territoire"] == selected_territory]
+selected_url = selected_row["URL"].values[0]
+selected_type = selected_row["Type"].values[0]
+st.markdown(f"📋 **Type :** {selected_type}")
+st.markdown(f"📥 [Télécharger le fichier XML de {selected_territory}]({selected_url})")
 
 
 # 2. Lecture du XML corrigée pour la structure RLUEx
