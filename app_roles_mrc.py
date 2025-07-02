@@ -10,7 +10,7 @@ st.title("🔍 Analyse des rôles d’évaluation foncière du Québec par codes
 # Charger le dictionnaire des CUBF
 @st.cache_data
 def load_cubf_dict():
-    xls = pd.ExcelFile("CUBF_MEFQ (11).xlsx")
+    xls = pd.ExcelFile("cubf_dict.xlsx")
     df = pd.read_excel(xls, sheet_name="MAJ2024")
     df = df[df["CUBF"].apply(lambda x: isinstance(x, int) and 1000 <= x <= 9999)]
     df["CUBF_str"] = df["CUBF"].astype(str)
